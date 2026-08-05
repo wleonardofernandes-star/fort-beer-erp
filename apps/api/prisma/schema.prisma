@@ -1,0 +1,475 @@
+// FORT BEER ERP — Fase 1 (domínio completo)
+// Estoque: saldo em EstoqueProduto; MovimentacaoEstoque é a fonte da verdade operacional.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Identidade / multi-empresa ───────────────────────────────────────────────
+
+model Empresa {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  nome      String
+  cnpj      String?
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
+
+  usuariosEmpresa   UsuarioEmpresa[]
+  perfis            Perfil[]
+  categorias        Categoria[]
+  produtos          Produto[]
+  fornecedores      Fornecedor[]
+  compras           Compra[]
+  clientes          Cliente[]
+  pedidos           Pedido[]
+  formasPagamento   FormaPagamento[]
+  estoquesLocais    EstoqueLocal[]
+  movimentacoes     MovimentacaoEstoque[]
+  contasFinanceiras ContaFinanceira[]
+  despesas          Despesa[]
+  centrosCusto      CentroCusto[]
+}
+
+model Usuario {
+  id           String         @id @default(cuid())
+  nome         String
+  login        String         @unique
+  email        String?
+  senhaHash    String
+  ativo        Boolean        @default(true)
+  criadoEm     DateTime       @default(now())
+
+  empresas      UsuarioEmpresa[]
+  refreshTokens RefreshToken[]
+  compras       Compra[]           @relation("CompraUsuario")
+  pedidos       Pedido[]           @relation("PedidoUsuario")
+  movimentacoes MovimentacaoEstoque[] @relation("MovimentacaoUsuario")
+  lancamentos   LancamentoFinanceiro[] @relation("LancamentoUsuario")
+  despesas      Despesa[]          @relation("DespesaUsuario")
+}
+
+/// Vínculo usuário ↔ empresa com um perfil (RBAC por empresa)
+model UsuarioEmpresa {
+  id        String   @id @default(cuid())
+  usuarioId String
+  empresaId String
+  perfilId  String
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  empresa Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  perfil  Perfil  @relation(fields: [perfilId], references: [id])
+
+  @@unique([usuarioId, empresaId])
+  @@index([empresaId])
+  @@index([perfilId])
+}
+
+model Perfil {
+  id        String   @id @default(cuid())
+  empresaId String?
+  /// GESTOR | BALCAO | DEPOSITO | FINANCEIRO
+  codigo    String
+  nome      String
+  sistema   Boolean  @default(false)
+  ativo     Boolean  @default(true)
+
+  empresa          Empresa?           @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  permissoes       PerfilPermissao[]
+  usuariosEmpresa  UsuarioEmpresa[]
+
+  @@unique([empresaId, codigo])
+  @@index([codigo])
+}
+
+model Permissao {
+  id     String @id @default(cuid())
+  codigo String @unique
+  nome   String
+  modulo String
+
+  perfis PerfilPermissao[]
+}
+
+model PerfilPermissao {
+  perfilId     String
+  permissaoId  String
+
+  perfil     Perfil    @relation(fields: [perfilId], references: [id], onDelete: Cascade)
+  permissao  Permissao @relation(fields: [permissaoId], references: [id], onDelete: Cascade)
+
+  @@id([perfilId, permissaoId])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  usuarioId String
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  revogado  Boolean  @default(false)
+  userAgent String?
+  ip        String?
+  criadoEm  DateTime @default(now())
+
+  @@index([usuarioId])
+  @@index([expiresAt])
+}
+
+// ─── Catálogo ─────────────────────────────────────────────────────────────────
+
+model Categoria {
+  id         String   @id @default(cuid())
+  empresaId  String
+  nome       String
+  nomeNorm   String
+  markupMeta Float    @default(0.35)
+  ordem      Int      @default(0)
+  ativo      Boolean  @default(true)
+
+  empresa  Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  produtos Produto[]
+
+  @@unique([empresaId, nomeNorm])
+  @@index([empresaId])
+}
+
+model Produto {
+  id          String   @id @default(cuid())
+  empresaId   String
+  categoriaId String?
+  nome        String
+  nomeNorm    String
+  descricao   String?
+  ehKit       Boolean  @default(false)
+  ativo       Boolean  @default(true)
+  criadoEm    DateTime @default(now())
+
+  empresa   Empresa     @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  categoria Categoria?  @relation(fields: [categoriaId], references: [id])
+  skus      ProdutoSKU[]
+
+  @@unique([empresaId, nomeNorm])
+  @@index([empresaId])
+  @@index([categoriaId])
+}
+
+/// Unidade vendável / comprável (lata, fardo, pack…)
+model ProdutoSKU {
+  id              String   @id @default(cuid())
+  produtoId       String
+  codigo          String?
+  codigoBarras    String?
+  /// UN | FARDO | CX | L | KG …
+  unidade         String   @default("UN")
+  /// Qtd de unidade-base neste SKU (ex.: fardo 12 = 12)
+  fatorConversao  Float    @default(1)
+  custoUnitario   Float    @default(0)
+  precoVenda      Float    @default(0)
+  estoqueMinimo   Float    @default(0)
+  ativo           Boolean  @default(true)
+  criadoEm        DateTime @default(now())
+
+  produto         Produto              @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  itensCompra     ItemCompra[]
+  itensPedido     ItemPedido[]
+  estoques        EstoqueProduto[]
+  movimentacoes   MovimentacaoEstoque[]
+
+  @@index([produtoId])
+  @@index([codigoBarras])
+  @@index([codigo])
+}
+
+// ─── Compras ──────────────────────────────────────────────────────────────────
+
+model Fornecedor {
+  id        String   @id @default(cuid())
+  empresaId String
+  nome      String
+  nomeNorm  String
+  documento String?
+  contato   String?
+  email     String?
+  telefone  String?
+  endereco  String?
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
+
+  empresa Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  compras Compra[]
+
+  @@unique([empresaId, nomeNorm])
+  @@index([empresaId])
+}
+
+model Compra {
+  id             String   @id @default(cuid())
+  empresaId      String
+  fornecedorId   String?
+  usuarioId      String?
+  data           DateTime
+  notaFiscal     String?
+  /// RASCUNHO | CONFIRMADA | CANCELADA
+  status         String   @default("CONFIRMADA")
+  formaPagamentoId String?
+  valorTotal     Float    @default(0)
+  observacao     String?
+  criadoEm       DateTime @default(now())
+
+  empresa        Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  fornecedor     Fornecedor?     @relation(fields: [fornecedorId], references: [id])
+  usuario        Usuario?        @relation("CompraUsuario", fields: [usuarioId], references: [id])
+  formaPagamento FormaPagamento? @relation(fields: [formaPagamentoId], references: [id])
+  itens          ItemCompra[]
+
+  @@index([empresaId, data])
+  @@index([fornecedorId])
+  @@index([status])
+}
+
+model ItemCompra {
+  id            String @id @default(cuid())
+  compraId      String
+  produtoSkuId  String
+  qtdVolumes    Float  @default(1)
+  qtdPorVolume  Float  @default(1)
+  quantidade    Float
+  custoUnitario Float  @default(0)
+  valorTotal    Float  @default(0)
+  precoVenda    Float?
+
+  compra     Compra     @relation(fields: [compraId], references: [id], onDelete: Cascade)
+  produtoSku ProdutoSKU @relation(fields: [produtoSkuId], references: [id])
+
+  @@index([compraId])
+  @@index([produtoSkuId])
+}
+
+// ─── Vendas / pedidos ─────────────────────────────────────────────────────────
+
+model Cliente {
+  id         String   @id @default(cuid())
+  empresaId  String
+  nome       String
+  nomeNorm   String
+  telefone   String?
+  documento  String?
+  endereco   String?
+  observacao String?
+  saldoFiado Float    @default(0)
+  ativo      Boolean  @default(true)
+  criadoEm   DateTime @default(now())
+
+  empresa Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  pedidos Pedido[]
+
+  @@index([empresaId, nomeNorm])
+  @@index([telefone])
+}
+
+model Pedido {
+  id               String   @id @default(cuid())
+  empresaId        String
+  clienteId        String?
+  usuarioId        String?
+  data             DateTime
+  /// BALCAO | ENTREGA
+  tipo             String   @default("BALCAO")
+  /// RASCUNHO | CONFIRMADO | SAIU | ENTREGUE | CANCELADO
+  status           String   @default("CONFIRMADO")
+  formaPagamentoId String?
+  valorTotal       Float    @default(0)
+  observacao       String?
+  enderecoEntrega  String?
+  chaveIdempotente String?  @unique
+  criadoEm         DateTime @default(now())
+
+  empresa        Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  cliente        Cliente?        @relation(fields: [clienteId], references: [id])
+  usuario        Usuario?        @relation("PedidoUsuario", fields: [usuarioId], references: [id])
+  formaPagamento FormaPagamento? @relation(fields: [formaPagamentoId], references: [id])
+  itens          ItemPedido[]
+
+  @@index([empresaId, data])
+  @@index([clienteId])
+  @@index([status])
+  @@index([tipo])
+}
+
+model ItemPedido {
+  id            String @id @default(cuid())
+  pedidoId      String
+  produtoSkuId  String
+  quantidade    Float
+  precoUnitario Float
+  valorTotal    Float
+
+  pedido     Pedido     @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  produtoSku ProdutoSKU @relation(fields: [produtoSkuId], references: [id])
+
+  @@index([pedidoId])
+  @@index([produtoSkuId])
+}
+
+model FormaPagamento {
+  id        String  @id @default(cuid())
+  empresaId String
+  codigo    String
+  nome      String
+  /// Se true, gera lançamento em ContaFinanceira
+  geraCaixa Boolean @default(true)
+  /// DINHEIRO | PIX | CARTAO | FIADO | OUTRO
+  tipo      String  @default("OUTRO")
+  ativo     Boolean @default(true)
+  ordem     Int     @default(0)
+
+  empresa     Empresa               @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  pedidos     Pedido[]
+  compras     Compra[]
+  lancamentos LancamentoFinanceiro[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+}
+
+// ─── Estoque ──────────────────────────────────────────────────────────────────
+
+model EstoqueLocal {
+  id        String  @id @default(cuid())
+  empresaId String
+  nome      String
+  /// DEPOSITO | LOJA | CAMINHAO
+  tipo      String  @default("DEPOSITO")
+  ativo     Boolean @default(true)
+
+  empresa       Empresa               @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  saldos        EstoqueProduto[]
+  movimentacoes MovimentacaoEstoque[]
+
+  @@unique([empresaId, nome])
+  @@index([empresaId])
+}
+
+/// Saldo materializado por local + SKU
+model EstoqueProduto {
+  id             String   @id @default(cuid())
+  estoqueLocalId String
+  produtoSkuId   String
+  quantidade     Float    @default(0)
+  atualizadoEm   DateTime @default(now()) @updatedAt
+
+  estoqueLocal EstoqueLocal @relation(fields: [estoqueLocalId], references: [id], onDelete: Cascade)
+  produtoSku   ProdutoSKU   @relation(fields: [produtoSkuId], references: [id], onDelete: Cascade)
+
+  @@unique([estoqueLocalId, produtoSkuId])
+  @@index([produtoSkuId])
+}
+
+model MovimentacaoEstoque {
+  id             String   @id @default(cuid())
+  empresaId      String
+  estoqueLocalId String
+  produtoSkuId   String
+  usuarioId      String?
+  data           DateTime @default(now())
+  /// ENTRADA | SAIDA | AJUSTE | TRANSFERENCIA
+  tipo           String
+  quantidade     Float
+  /// COMPRA | PEDIDO | INVENTARIO | MANUAL | ...
+  origemTipo     String?
+  origemId       String?
+  observacao     String?
+
+  empresa      Empresa      @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  estoqueLocal EstoqueLocal @relation(fields: [estoqueLocalId], references: [id])
+  produtoSku   ProdutoSKU   @relation(fields: [produtoSkuId], references: [id])
+  usuario      Usuario?     @relation("MovimentacaoUsuario", fields: [usuarioId], references: [id])
+
+  @@index([empresaId, data])
+  @@index([estoqueLocalId, produtoSkuId])
+  @@index([origemTipo, origemId])
+}
+
+// ─── Financeiro ───────────────────────────────────────────────────────────────
+
+model ContaFinanceira {
+  id        String  @id @default(cuid())
+  empresaId String
+  nome      String
+  /// CAIXA | BANCO | PIX | CARTEIRA
+  tipo      String  @default("CAIXA")
+  saldo     Float   @default(0)
+  ativo     Boolean @default(true)
+
+  empresa     Empresa                @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  lancamentos LancamentoFinanceiro[]
+  despesas    Despesa[]
+
+  @@unique([empresaId, nome])
+  @@index([empresaId])
+}
+
+model LancamentoFinanceiro {
+  id               String   @id @default(cuid())
+  contaId          String
+  usuarioId        String?
+  formaPagamentoId String?
+  data             DateTime @default(now())
+  /// ENTRADA | SAIDA
+  tipo             String
+  valor            Float
+  descricao        String?
+  /// PEDIDO | COMPRA | DESPESA | SANGRIA | SUPRIMENTO | FIADO | MANUAL
+  origemTipo       String?
+  origemId         String?
+
+  conta          ContaFinanceira @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  usuario        Usuario?        @relation("LancamentoUsuario", fields: [usuarioId], references: [id])
+  formaPagamento FormaPagamento? @relation(fields: [formaPagamentoId], references: [id])
+
+  @@index([contaId, data])
+  @@index([origemTipo, origemId])
+}
+
+model CentroCusto {
+  id        String  @id @default(cuid())
+  empresaId String
+  codigo    String
+  nome      String
+  ativo     Boolean @default(true)
+
+  empresa  Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  despesas Despesa[]
+
+  @@unique([empresaId, codigo])
+  @@index([empresaId])
+}
+
+model Despesa {
+  id            String   @id @default(cuid())
+  empresaId     String
+  centroCustoId String?
+  contaId       String?
+  usuarioId     String?
+  data          DateTime
+  valor         Float
+  descricao     String
+  observacao    String?
+  criadoEm      DateTime @default(now())
+
+  empresa     Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+  centroCusto CentroCusto?    @relation(fields: [centroCustoId], references: [id])
+  conta       ContaFinanceira? @relation(fields: [contaId], references: [id])
+  usuario     Usuario?        @relation("DespesaUsuario", fields: [usuarioId], references: [id])
+
+  @@index([empresaId, data])
+  @@index([centroCustoId])
+}

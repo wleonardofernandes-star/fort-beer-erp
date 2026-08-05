@@ -1,0 +1,113 @@
+# Produção enxuta — Hostinger KVM 1 (~4 GB RAM)
+# Uso: docker compose -f docker/docker-compose.kvm1.yml --env-file apps/api/.env.production up -d --build
+#
+# Antes: copie apps/api/.env.production.example → apps/api/.env.production
+# e ajuste POSTGRES_PASSWORD, JWT_*, CORS_ORIGIN, NEXT_PUBLIC_API_URL.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fortbeer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fortbeer_change_me}
+      POSTGRES_DB: fortbeer
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - max_connections=50
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fortbeer -d fortbeer"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 768m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      [
+        "redis-server",
+        "--maxmemory",
+        "128mb",
+        "--maxmemory-policy",
+        "allkeys-lru",
+      ]
+    volumes:
+      - redisdata:/data
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: 192m
+
+  api:
+    build:
+      context: ../apps/api
+      dockerfile: ../../docker/Dockerfile.api
+    restart: unless-stopped
+    env_file:
+      - ../apps/api/.env.production
+    environment:
+      DATABASE_URL: postgresql://fortbeer:${POSTGRES_PASSWORD:-fortbeer_change_me}@db:5432/fortbeer?schema=public
+      REDIS_URL: redis://redis:6379
+      PORT: 4000
+      STORAGE_LOCAL_ROOT: /data/uploads
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=384
+    volumes:
+      - uploads:/data/uploads
+    expose:
+      - "4000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 512m
+
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: ../../docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NODE_OPTIONS: --max-old-space-size=384
+    expose:
+      - "3000"
+    depends_on:
+      - api
+    mem_limit: 512m
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - web
+      - api
+    mem_limit: 64m
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:

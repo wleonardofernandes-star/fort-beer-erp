@@ -1,0 +1,23 @@
+{
+  "name": "fort-beer-erp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FORT BEER ERP — Next.js + NestJS + PostgreSQL + Redis",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run start:dev --workspace=api",
+    "dev:web": "npm run dev --workspace=web",
+    "build:api": "npm run build --workspace=api",
+    "build:web": "npm run build --workspace=web",
+    "db:up": "docker compose -f docker/docker-compose.yml up -d db redis",
+    "db:migrate": "npm run prisma:migrate --workspace=api",
+    "db:seed": "npm run prisma:seed --workspace=api",
+    "compose:up": "docker compose -f docker/docker-compose.yml up -d --build",
+    "compose:down": "docker compose -f docker/docker-compose.yml down"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
