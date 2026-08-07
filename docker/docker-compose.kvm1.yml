@@ -1,8 +1,8 @@
 # Produção enxuta — Hostinger KVM 1 (~4 GB RAM)
-# Uso: docker compose -f docker/docker-compose.kvm1.yml --env-file apps/api/.env.production up -d --build
 #
-# Antes: copie apps/api/.env.production.example → apps/api/.env.production
-# e ajuste POSTGRES_PASSWORD, JWT_*, CORS_ORIGIN, NEXT_PUBLIC_API_URL.
+# SEMPRE rode a partir da raiz do projeto:
+#   cd /var/www/fort-beer-erp
+#   docker compose -f docker/docker-compose.kvm1.yml --env-file apps/api/.env.production up -d --build
 
 services:
   db:
@@ -55,8 +55,8 @@ services:
 
   api:
     build:
-      context: ../apps/api
-      dockerfile: ../../docker/Dockerfile.api
+      context: ..
+      dockerfile: docker/Dockerfile.api
     restart: unless-stopped
     env_file:
       - ../apps/api/.env.production
@@ -80,8 +80,8 @@ services:
 
   web:
     build:
-      context: ../apps/web
-      dockerfile: ../../docker/Dockerfile.web
+      context: ..
+      dockerfile: docker/Dockerfile.web
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api}
     restart: unless-stopped
