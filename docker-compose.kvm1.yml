@@ -1,13 +1,10 @@
-# DEPRECATED for Hostinger: prefer the ROOT compose file (source of truth):
-#   docker-compose.kvm1.yml  (at repo root, with context: .)
+# FORT BEER ERP — produção KVM 1
+# Rode SEMPRE na raiz do repositório (onde estão apps/ e docker/):
 #
-#   cd /var/www/fort-beer-erp
+#   cd /docker/fort-beer-erp    # ou /var/www/fort-beer-erp
 #   docker compose -f docker-compose.kvm1.yml --env-file apps/api/.env.production up -d --build
 #
-# This file is kept for compatibility when invoked as:
-#   docker compose -f docker/docker-compose.kvm1.yml ...
-# Paths below are relative to THIS file, so context must be ".." (repo root).
-# Do NOT change context to "." here — that would point at docker/ and break COPY apps/*.
+# NÃO use context ".." — no painel Hostinger isso aponta para fora do projeto.
 
 services:
   db:
@@ -18,13 +15,15 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fortbeer_change_me}
       POSTGRES_DB: fortbeer
     command:
-      - postgres
-      - -c
-      - shared_buffers=128MB
-      - -c
-      - work_mem=4MB
-      - -c
-      - max_connections=50
+      [
+        "postgres",
+        "-c",
+        "shared_buffers=128MB",
+        "-c",
+        "work_mem=4MB",
+        "-c",
+        "max_connections=50",
+      ]
     volumes:
       - pgdata:/var/lib/postgresql/data
     expose:
@@ -60,11 +59,11 @@ services:
 
   api:
     build:
-      context: ..
+      context: .
       dockerfile: docker/Dockerfile.api
     restart: unless-stopped
     env_file:
-      - ../apps/api/.env.production
+      - apps/api/.env.production
     environment:
       DATABASE_URL: postgresql://fortbeer:${POSTGRES_PASSWORD:-fortbeer_change_me}@db:5432/fortbeer?schema=public
       REDIS_URL: redis://redis:6379
@@ -85,7 +84,7 @@ services:
 
   web:
     build:
-      context: ..
+      context: .
       dockerfile: docker/Dockerfile.web
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api}
@@ -106,7 +105,7 @@ services:
     ports:
       - "80:80"
     volumes:
-      - ./nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - web
       - api
